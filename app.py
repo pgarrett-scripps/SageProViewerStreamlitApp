@@ -1,5 +1,6 @@
 import os
 from collections import Counter
+from typing import List
 
 import pandas as pd
 import streamlit as st
@@ -8,7 +9,16 @@ import plotly.express as px
 def get_env_str(var_name, default):
     return os.getenv(var_name, default)
 
-PDB_APP_URL = get_env_str('PDB_APP_URL', 'http://pdb-coverage.streamlit.app/')
+PDB_APP_URL = get_env_str('PDB_APP_URL', 'https://pdb-cov.streamlit.app/')
+
+
+def serialize_peptides(peptides: List[str]) -> str:
+    """Serialize a list of peptides into a single string."""
+    # counter
+    peptide_counts = Counter(peptides)
+    serialized = ','.join([f"{peptide};{count}" for peptide, count in peptide_counts.items()])
+    return serialized
+
 
 with st.sidebar:
     parquet_file = st.file_uploader("Upload SagePro parquet file", type=['parquet'])
@@ -44,8 +54,19 @@ if keep_best_peptide:
 # calculate ppm from calcmass, expmass
 df['ppm'] = (df['calcmass'] + df['isotope_error'] - df['expmass']) / df['calcmass'] * 1e6
 
+
+c1, c2, c3 = st.columns([1, 1, 1])
+
+# add metrics for number of peptides, proteins, and spectra
+c1.metric(label="Peptides", value=len(df['peptide'].unique()))
+c2.metric(label="Protein Groups", value=len(df['proteins'].unique()))
+c3.metric(label="Spectra", value=len(df))
+
+
 # plot a histogram of the peptide lengths (plotly)
 tabs = st.tabs(['Data', 'Peptide Stats', 'Mass Error', 'Drift', 'Scatter', 'Coverage'])
+
+
 
 with tabs[0]:
     st.write(df)
@@ -147,13 +168,8 @@ with tabs[5]:
     protein_df['Gene'] = protein_df['Locus Comps'].apply(lambda x: x[2])
     protein_df['Reverse'] = protein_df['Database'].str.contains(rev_string)
 
-    # serialize_peptides
-    def serialize_peptides(peptides):
-        peptide_counts = Counter(peptides)
-        return ','.join([f'{k};{v}' for k, v in peptide_counts.items()])
-
     def make_link(protein_id, serialized_peptides, reverse):
-        return f'{PDB_APP_URL}?protein_id={protein_id}&input={serialized_peptides}&input_type=redundant_peptides&reverse_protein={reverse}'
+        return f'{PDB_APP_URL}?input_type=Protein+ID&protein_id={protein_id}&peptides={serialized_peptides}&reverse_protein={reverse}'
 
     protein_df['SerializedPeptides'] = protein_df['peptide'].apply(serialize_peptides)
     protein_df['Link'] = protein_df.apply(lambda x: make_link(x['Protein'], x['SerializedPeptides'], x['Reverse']), axis=1)
