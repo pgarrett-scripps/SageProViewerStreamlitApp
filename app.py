@@ -14,11 +14,13 @@ def get_env_str(var_name, default):
 PDB_APP_URL = get_env_str('PDB_APP_URL', 'https://pdb-cov.streamlit.app/')
 
 
+import urllib.parse
+
 def serialize_peptides(peptides: List[str]) -> str:
     """Serialize a list of peptides into a single string."""
     # counter
     peptide_counts = Counter(peptides)
-    serialized = ','.join([f"{peptide};{count}" for peptide, count in peptide_counts.items()])
+    serialized = ','.join([f"{urllib.parse.quote(peptide, safe='')};{count}" for peptide, count in peptide_counts.items()])
     return serialized
 
 
@@ -32,10 +34,10 @@ with st.sidebar:
 
     remove_decoys = st.checkbox("Remove decoys", value=True)
 
-    qvalue_filter = st.multiselect("Q-value filter", options=['spectrum', 'peptide', 'protein'], default=['spectrum'])
-    qvalue_filter_value = st.number_input("Q-value filter value", value=0.05)
+    qvalue_filter = st.multiselect("Q-value filter", options=['spectrum', 'peptide', 'protein'], default=['peptide'])
+    qvalue_filter_value = st.number_input("Q-value filter value", value=0.01)
 
-    keep_best_peptide = st.checkbox("Keep best peptide", value=True,
+    keep_best_peptide = st.checkbox("Keep best peptide", value=False,
                                     help='Keep the best peptide, charge, filename pair')
 
 if remove_decoys:
@@ -150,15 +152,17 @@ with tabs[5]:
 
     rev_string = st.text_input("Reverse string", value='rev_')
 
+    df['proforma'] = df.apply(lambda x: f"{x['peptide']}/{x['charge']}", axis=1)
+
     # group by protein and make alist of all peptides
-    protein_df = df.groupby(['proteins']).agg({'peptide': list}).reset_index()
+    protein_df = df.groupby(['proteins']).agg({'proforma': list}).reset_index()
     protein_df['proteins'] = protein_df['proteins'].str.split(';')
 
     # explode the df so that each protein is on its own row (sep by ;)
     protein_df = protein_df.explode('proteins')
 
     # merge rows which have the same protein (combin peptide lists)
-    protein_df = protein_df.groupby('proteins').agg({'peptide': 'sum'}).reset_index()
+    protein_df = protein_df.groupby('proteins').agg({'proforma': 'sum'}).reset_index()
 
     protein_df['Locus Comps'] = protein_df['proteins'].str.split('|')
     # drop cols where there are not 3 values
@@ -169,25 +173,25 @@ with tabs[5]:
     protein_df['Gene'] = protein_df['Locus Comps'].apply(lambda x: x[2] if len(x) == 3 else None)
     protein_df['Reverse'] = protein_df['proteins'].str.contains(rev_string)
 
-    def make_link(protein_id, serialized_peptides, reverse):
+    def make_link(protein_id, serialized_peptides, reverse, proteins, sequence_count, spectrum_count):
         
         if protein_id is None:
             input_type = 'Protein+Sequence'
             
-            return f'{PDB_APP_URL}?input_type={input_type}&peptides={serialized_peptides}&reverse_protein={reverse}&protein_sequence={stp.EMPTY_STRING_URL_VALUE}'
+            return f'{PDB_APP_URL}?input_type={input_type}&peptides={serialized_peptides}&reverse_protein={reverse}&protein_sequence={stp.EMPTY_STRING_URL_VALUE}&title={proteins}&subtitle=Seqs: {sequence_count} | Specs: {spectrum_count}&auto_spin=False&strip_mods=False&filter_unique=False'
 
         else:
             input_type = 'Protein+ID'
-            return f'{PDB_APP_URL}?input_type={input_type}&protein_id={protein_id}&peptides={serialized_peptides}&reverse_protein={reverse}'
+            return f'{PDB_APP_URL}?input_type={input_type}&protein_id={protein_id}&peptides={serialized_peptides}&reverse_protein={reverse}&auto_spin=False&strip_mods=False&filter_unique=False'
 
-    protein_df['SerializedPeptides'] = protein_df['peptide'].apply(serialize_peptides)
-    protein_df['Link'] = protein_df.apply(lambda x: make_link(x['Protein'], x['SerializedPeptides'], x['Reverse']), axis=1)
+    protein_df['Sequence Count'] = protein_df['proforma'].apply(lambda x: len(set(x)))
+    protein_df['Spectrum Count'] = protein_df['proforma'].apply(len)
+
+    protein_df['SerializedPeptides'] = protein_df['proforma'].apply(serialize_peptides)
+    protein_df['Link'] = protein_df.apply(lambda x: make_link(x['Protein'], x['SerializedPeptides'], x['Reverse'], x['proteins'], x['Sequence Count'],x['Spectrum Count']), axis=1)
 
     # drop locus comps, serialized peptides
     protein_df.drop(columns=['Locus Comps', 'SerializedPeptides'], inplace=True)
-
-    protein_df['Sequence Count'] = protein_df['peptide'].apply(lambda x: len(set(x)))
-    protein_df['Spectrum Count'] = protein_df['peptide'].apply(len)
 
     protein_df = protein_df[['Link', 'proteins', 'Sequence Count', 'Spectrum Count']]
 
