@@ -25,12 +25,21 @@ def serialize_peptides(peptides: List[str]) -> str:
 
 
 with st.sidebar:
-    parquet_file = st.file_uploader("Upload SagePro parquet file", type=['parquet'])
+    parquet_file = st.file_uploader("Upload SagePro parquet file", type=['parquet', 'tsv'])
 
-    if not parquet_file:
+    if parquet_file:
+        # Check file extension to determine how to read it
+        file_extension = parquet_file.name.split('.')[-1].lower()
+        
+        if file_extension == 'parquet':
+            df = pd.read_parquet(parquet_file)
+        elif file_extension == 'tsv':
+            df = pd.read_csv(parquet_file, sep='\t')
+        else:
+            st.error(f"Unsupported file type: {file_extension}")
+            st.stop()
+    else:
         st.stop()
-
-    df = pd.read_parquet(parquet_file)
 
     remove_decoys = st.checkbox("Remove decoys", value=True)
 
@@ -41,7 +50,10 @@ with st.sidebar:
                                     help='Keep the best peptide, charge, filename pair')
 
 if remove_decoys:
-    df = df[~df['is_decoy']]
+    if 'is_decoy' in df:
+        df = df[~df['is_decoy']]
+    else:
+        df = df[df['label']==1]
 
 if len(qvalue_filter) > 0:
     if 'spectrum' in qvalue_filter:
@@ -70,7 +82,9 @@ c3.metric(label="Spectra", value=len(df))
 # plot a histogram of the peptide lengths (plotly)
 tabs = st.tabs(['Data', 'Peptide Stats', 'Mass Error', 'Drift', 'Scatter', 'Coverage'])
 
-
+deocy_col = 'is_decoy'
+if 'is_decoy' not in df:
+    deocy_col = 'label'
 
 with tabs[0]:
     st.write(df)
@@ -99,7 +113,7 @@ with tabs[2]:
                      x='ppm',
                      y=score_to_use,
                      title='Precursor Mass Error (ppm)',
-                     color='is_decoy',
+                     color=deocy_col,
                      hover_data=['peptide'])
     st.plotly_chart(fig)
 
@@ -107,12 +121,12 @@ with tabs[3]:
     # loop over files and plot drift
     for file in df['filename'].unique():
         file_df = df[df['filename'] == file]
-        fig = px.scatter(file_df, x='rt', y='delta_rt_model', title=f'Drift vs RT Error {file}', color='is_decoy',
+        fig = px.scatter(file_df, x='rt', y='delta_rt_model', title=f'Drift vs RT Error {file}', color=deocy_col,
                          hover_data=['peptide'])
         st.plotly_chart(fig)
 
         # plot ppm vs rt
-        fig = px.scatter(file_df, x='rt', y='ppm', title=f'PPM vs RT {file}', color='is_decoy',
+        fig = px.scatter(file_df, x='rt', y='ppm', title=f'PPM vs RT {file}', color=deocy_col,
                          hover_data=['peptide'])
         st.plotly_chart(fig)
 
@@ -124,9 +138,9 @@ with tabs[4]:
                  'sage_discriminant_score', 'poisson', 'delta_rt_model',
                  'hyperscore', 'matched_intensity_percent', 'delta_next', 'ppm']
 
-    color_cols = ['is_decoy', 'charge', 'missed_cleavages', 'peptide_len', 'semi_enzymatic', 'filename']
+    color_cols = [deocy_col, 'charge', 'missed_cleavages', 'peptide_len', 'semi_enzymatic', 'filename']
 
-    color_axis = st.selectbox("Color axis", options=color_cols, index=color_cols.index('is_decoy'))
+    color_axis = st.selectbox("Color axis", options=color_cols, index=color_cols.index(deocy_col))
 
     x_axis = st.selectbox("X-axis", options=axis_cols, index=axis_cols.index('hyperscore'))
     y_axis = st.selectbox("Y-axis", options=axis_cols, index=axis_cols.index('delta_next'))
