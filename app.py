@@ -49,6 +49,8 @@ with st.sidebar:
     keep_best_peptide = st.checkbox("Keep best peptide", value=False,
                                     help='Keep the best peptide, charge, filename pair')
 
+    filter_protein = st.text_input("Filter Protein", value='', help='Filter proteins by substring match')
+
 if remove_decoys:
     if 'is_decoy' in df:
         df = df[~df['is_decoy']]
@@ -68,7 +70,11 @@ if keep_best_peptide:
     df = df.sort_values('hyperscore', ascending=False).groupby(['peptide', 'charge', 'filename']).head(1)
 
 # calculate ppm from calcmass, expmass
-df['ppm'] = (df['calcmass'] + df['isotope_error'] - df['expmass']) / df['calcmass'] * 1e6
+df['ppm'] = (df['expmass'] - (df['calcmass'] + df['isotope_error'])) / df['expmass'] * 1e6
+
+if filter_protein:
+    # filter proteins by substring match
+    df = df[df['proteins'].str.contains(filter_protein)]
 
 
 c1, c2, c3 = st.columns([1, 1, 1])
@@ -85,6 +91,8 @@ tabs = st.tabs(['Data', 'Peptide Stats', 'Mass Error', 'Drift', 'Scatter', 'Cove
 deocy_col = 'is_decoy'
 if 'is_decoy' not in df:
     deocy_col = 'label'
+
+df['da'] = df['expmass'] - df['calcmass']
 
 with tabs[0]:
     st.write(df)
@@ -109,12 +117,18 @@ with tabs[2]:
     score_to_use = st.selectbox("Score to use", options=score_cos,
                                 index=score_cos.index('hyperscore'))
 
+    mass_error = st.selectbox('Mass Error Type', options=['ppm', 'da'], index=0)
+
+    hover_data = ['peptide', 'charge']
+    if 'ambiguity_sequence' in df.columns:
+        hover_data.append('ambiguity_sequence')
+
     fig = px.scatter(df,
-                     x='ppm',
+                     x=mass_error,
                      y=score_to_use,
                      title='Precursor Mass Error (ppm)',
                      color=deocy_col,
-                     hover_data=['peptide'])
+                     hover_data=hover_data)
     st.plotly_chart(fig)
 
 with tabs[3]:
@@ -188,6 +202,8 @@ with tabs[5]:
     protein_df['Reverse'] = protein_df['proteins'].str.contains(rev_string)
 
     def make_link(protein_id, serialized_peptides, reverse, proteins, sequence_count, spectrum_count):
+
+        
         
         if protein_id is None:
             input_type = 'Protein+Sequence'
