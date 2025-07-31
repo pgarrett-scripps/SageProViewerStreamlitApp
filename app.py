@@ -119,15 +119,17 @@ with tabs[2]:
 
     mass_error = st.selectbox('Mass Error Type', options=['ppm', 'da'], index=0)
 
-    hover_data = ['peptide', 'charge']
+    hover_data = ['peptide', 'charge', 'proteins']
     if 'ambiguity_sequence' in df.columns:
         hover_data.append('ambiguity_sequence')
+
+    color = st.selectbox("Color by", options=[deocy_col, 'charge', 'missed_cleavages', 'peptide_len', 'proteins'], index=0)
 
     fig = px.scatter(df,
                      x=mass_error,
                      y=score_to_use,
                      title='Precursor Mass Error (ppm)',
-                     color=deocy_col,
+                     color=color,
                      hover_data=hover_data)
     st.plotly_chart(fig)
 
