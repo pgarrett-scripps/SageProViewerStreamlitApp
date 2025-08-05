@@ -1,6 +1,8 @@
+import base64
 import os
 from collections import Counter
 from typing import List
+import zlib
 
 import pandas as pd
 import streamlit as st
@@ -15,13 +17,47 @@ PDB_APP_URL = get_env_str('PDB_APP_URL', 'https://pdb-cov.streamlit.app/')
 
 
 import urllib.parse
+COMPRESSIONPREFIX = "COMPRESSED"
+
+
+def compress_text(text: str) -> str:
+    """
+    Compress text using zlib and encode with base64 to make it URL-compatible.
+
+    Args:
+        text: The text to compress
+
+    Returns:
+        URL-compatible compressed string
+    """
+    compressed = zlib.compress(
+        text.encode("utf-8"), level=9
+    )  # Level 0-9, 9 is highest compression
+    encoded = base64.urlsafe_b64encode(compressed).decode("utf-8")
+    return encoded
+
+
+def decompress_text(compressed_text: str) -> str:
+    """
+    Decompress text that was compressed with compress_text.
+
+    Args:
+        compressed_text: The compressed text
+
+    Returns:
+        Original decompressed text
+    """
+    decoded = base64.urlsafe_b64decode(compressed_text)
+    decompressed = zlib.decompress(decoded).decode("utf-8")
+    return decompressed
 
 def serialize_peptides(peptides: List[str]) -> str:
     """Serialize a list of peptides into a single string."""
     # counter
     peptide_counts = Counter(peptides)
-    serialized = ','.join([f"{urllib.parse.quote(peptide, safe='')};{count}" for peptide, count in peptide_counts.items()])
-    return serialized
+    serialized = ','.join([f"{peptide};{count}" for peptide, count in peptide_counts.items()])
+    c = COMPRESSIONPREFIX + compress_text(serialized)
+    return c
 
 
 with st.sidebar:
@@ -42,6 +78,11 @@ with st.sidebar:
         st.stop()
 
     remove_decoys = st.checkbox("Remove decoys", value=True)
+    remove_contaminants = st.checkbox("Remove contaminants", value=True,
+                                      help='Remove contaminants, which are proteins that are not in the target database')
+    if remove_contaminants:
+        contaminants_flag = st.text_input("Contaminants flag", value='Cont_')
+        df = df[~df['proteins'].str.contains(contaminants_flag)]
 
     qvalue_filter = st.multiselect("Q-value filter", options=['spectrum', 'peptide', 'protein'], default=['peptide'])
     qvalue_filter_value = st.number_input("Q-value filter value", value=0.01)
@@ -50,6 +91,25 @@ with st.sidebar:
                                     help='Keep the best peptide, charge, filename pair')
 
     filter_protein = st.text_input("Filter Protein", value='', help='Filter proteins by substring match')
+    remove_semi = st.checkbox("Remove semi-enzymatic peptides", value=True,
+                              help='Remove semi-enzymatic peptides, which are peptides that are not fully cleaved by the enzyme')
+    
+    if remove_semi:
+        df = df[df['semi_enzymatic']==0]
+
+    filter_peptide = st.text_input("Filter stripped peptide", value='',
+                                            help='Keep peptides that contain this sequence')
+    if filter_peptide:
+        df = df[df['stripped_peptide'] == filter_peptide]
+
+    filter_by_filename = st.checkbox("Filter by filename", value=False,
+                                     help='Filter by filename, only keep spectra from the selected files')
+    if filter_by_filename:
+        filenames = st.multiselect("Select filenames", options=df['filename'].unique())
+        if filenames:
+            df = df[df['filename'].isin(filenames)]
+        else:
+            st.warning("No filenames selected, showing all data.")
 
 if remove_decoys:
     if 'is_decoy' in df:
@@ -68,6 +128,10 @@ if len(qvalue_filter) > 0:
 if keep_best_peptide:
     # sort by hyperscore and keep the best peptide, charge, filename
     df = df.sort_values('hyperscore', ascending=False).groupby(['peptide', 'charge', 'filename']).head(1)
+
+
+by_ratio = df['longest_b'] / df['longest_y']
+df['by_ratio'] = by_ratio
 
 # calculate ppm from calcmass, expmass
 df['ppm'] = (df['expmass'] - (df['calcmass'] + df['isotope_error'])) / df['expmass'] * 1e6
@@ -95,7 +159,7 @@ if 'is_decoy' not in df:
 df['da'] = df['expmass'] - df['calcmass']
 
 with tabs[0]:
-    st.write(df)
+    st.dataframe(df, height=1000)
 
 with tabs[1]:
     fig = px.histogram(df, x='peptide_len', nbins=20, title='Peptide Lengths')
@@ -119,11 +183,11 @@ with tabs[2]:
 
     mass_error = st.selectbox('Mass Error Type', options=['ppm', 'da'], index=0)
 
-    hover_data = ['peptide', 'charge', 'proteins']
+    hover_data = ['peptide', 'charge', 'proteins', 'longest_b', 'longest_y', 'filename']
     if 'ambiguity_sequence' in df.columns:
         hover_data.append('ambiguity_sequence')
 
-    color = st.selectbox("Color by", options=[deocy_col, 'charge', 'missed_cleavages', 'peptide_len', 'proteins'], index=0)
+    color = st.selectbox("Color by", options=[deocy_col, 'charge', 'missed_cleavages', 'peptide_len', 'proteins', 'by_ratio', 'filename'], index=0)
 
     fig = px.scatter(df,
                      x=mass_error,
@@ -204,7 +268,6 @@ with tabs[5]:
     protein_df['Reverse'] = protein_df['proteins'].str.contains(rev_string)
 
     def make_link(protein_id, serialized_peptides, reverse, proteins, sequence_count, spectrum_count):
-
         
         
         if protein_id is None:
