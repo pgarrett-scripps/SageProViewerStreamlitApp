@@ -244,9 +244,15 @@ with tabs[4]:
 with tabs[5]:
     # coverage plot
 
-    rev_string = st.text_input("Reverse string", value='rev_')
-
     df['proforma'] = df.apply(lambda x: f"{x['peptide']}/{x['charge']}", axis=1)
+
+    rev_string = st.text_input("Reverse string", value='rev_')
+    if 'ambiguity_sequence' in df.columns:
+        use_ambiguity_sequence = st.checkbox("Use ambiguity sequence", value=True,
+                                             help='Use ambiguity sequence to filter peptides, otherwise use stripped peptide')
+        if use_ambiguity_sequence:
+            # if ambiguity_sequence is present, use it to filter peptides
+            df['proforma'] = df.apply(lambda x: f"{x['ambiguity_sequence']}/{x['charge']}", axis=1)
 
     # group by protein and make alist of all peptides
     protein_df = df.groupby(['proteins']).agg({'proforma': list}).reset_index()
@@ -268,8 +274,7 @@ with tabs[5]:
     protein_df['Reverse'] = protein_df['proteins'].str.contains(rev_string)
 
     def make_link(protein_id, serialized_peptides, reverse, proteins, sequence_count, spectrum_count):
-        
-        
+            
         if protein_id is None:
             input_type = 'Protein+Sequence'
             
